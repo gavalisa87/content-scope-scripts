@@ -1793,6 +1793,7 @@
   function __variableDynamicImportRuntime0__(path) {
      switch (path) {
        case './features/cookie.js': return Promise.resolve().then(function () { return cookie; });
+       case './features/element-hiding.js': return Promise.resolve().then(function () { return elementHiding; });
        case './features/fingerprinting-audio.js': return Promise.resolve().then(function () { return fingerprintingAudio; });
        case './features/fingerprinting-battery.js': return Promise.resolve().then(function () { return fingerprintingBattery; });
        case './features/fingerprinting-canvas.js': return Promise.resolve().then(function () { return fingerprintingCanvas; });
@@ -1842,7 +1843,8 @@
           'referrer',
           'fingerprintingScreenSize',
           'fingerprintingTemporaryStorage',
-          'navigatorInterface'
+          'navigatorInterface',
+          'elementHiding'
       ];
 
       for (const featureName of featureNames) {
@@ -1857,7 +1859,7 @@
       }
   }
 
-  async function init$d (args) {
+  async function init$e (args) {
       initArgs = args;
       if (!shouldRun()) {
           return
@@ -2209,7 +2211,7 @@
       });
   }
 
-  function init$c (args) {
+  function init$d (args) {
       args.cookie.debug = args.debug;
       cookiePolicy = args.cookie;
 
@@ -2233,8 +2235,115 @@
   var cookie = /*#__PURE__*/Object.freeze({
     __proto__: null,
     load: load,
-    init: init$c,
+    init: init$d,
     update: update
+  });
+
+  function collapseDomNode(element, type) {
+      console.log("attempting to hide element", element, type);
+      if (!element) {
+          return
+      }
+      
+      if (type === 'hide') {
+          if (isDomNodeEmpty(element)) {
+              element.style.setProperty('display', 'none', 'important');
+              element.hidden = true;
+          }
+      }
+      
+      if (type === 'closest-empty') {
+          if (isDomNodeEmpty(element)) {
+              element.style.setProperty('display', 'none', 'important');
+              element.hidden = true;
+              
+  //            if (element.parentNode.childElementCount === 1) {
+                  collapseDomNode(element.parentNode, type);
+              }
+  //        }
+      }
+  }
+
+  function isDomNodeEmpty (node) {
+      if (node.childElementCount === 0 ||
+          node.textContent.trim() === '' || node.textContent.trim().toLocaleLowerCase() === 'advertisement' ||
+          [...node.children].every((el) => (el.nodeName === 'SCRIPT' || el.hidden === true || el.textContent.trim() === ''))) {
+          return true
+      }
+      return false
+  }
+
+  function hideMatchingDomNodes(rules) {
+      const document = globalThis.document;
+      
+      rules.forEach((rule) => {
+          const matchingElementArray = [...document.querySelectorAll(rule.selector)];
+          matchingElementArray.forEach((element) => {
+              collapseDomNode(element, rule.type);
+          });
+          
+      });
+  }
+
+  function init$c (args) {
+      if (isBeingFramed()) {
+          return
+      }
+      console.log("elementHiding successfully injected");
+      
+      const document = globalThis.document;
+      const featureName = 'elementHiding';
+      const domain = args.site.domain;
+      const domainRules = getFeatureSetting(featureName, args, 'domains');
+      const globalRules = getFeatureSetting(featureName, args, 'rules');
+
+      // collect all matching rules for domain
+      const activeDomainRules = domainRules.filter((rule) => {
+          return matchHostname(domain, rule.domain)
+      }).flatMap((item) => item.rules);
+      
+      const overrideRules = activeDomainRules.filter((rule) => {
+          return rule.type === 'override'
+      });
+      
+      let activeRules = activeDomainRules.concat(globalRules);
+      
+      // remove overrides and rules that match overrides from array of rules to be applied to page
+      overrideRules.forEach((override) => {
+          activeRules = activeRules.filter((rule) => {
+              return rule.selector !== override.selector
+          });
+      });
+      
+      console.log("rules to be applied", activeRules);
+      
+      // now have the final list of rules to apply, so we apply them when document is loaded
+      if (document.readyState === 'loading') {
+          window.addEventListener('DOMContentLoaded', (event) => {
+              setTimeout(() => {
+                  hideMatchingDomNodes(activeRules);
+              }, 300);
+          });
+      } else {
+          setTimeout(() => {
+              hideMatchingDomNodes(activeRules);
+          }, 300);
+      }
+      // SPAs like aljazeera.com don't have a DOMContentLoaded event on navigations, so we set
+      // up a listener on popstate as well
+      window.addEventListener('popstate', (event) => {
+          setTimeout(() => {
+              hideMatchingDomNodes(activeRules);
+          }, 300);
+      });
+      
+      //console.log("getFeatureSettingEnabled", getFeatureSettingEnabled())
+      console.log(args);
+  }
+
+  var elementHiding = /*#__PURE__*/Object.freeze({
+    __proto__: null,
+    init: init$c
   });
 
   function init$b (args) {
@@ -4426,7 +4535,7 @@
     init: init
   });
 
-  exports.init = init$d;
+  exports.init = init$e;
   exports.load = load$1;
   exports.update = update$1;
 
