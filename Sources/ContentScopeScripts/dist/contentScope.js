@@ -2283,11 +2283,11 @@
       const visibleText = node.innerText.trim().toLocaleLowerCase();
       const mediaContent = node.querySelector('video,canvas');
       const frameElements = [...node.querySelectorAll('iframe')];
-      // about:blank iframes don't count as content, return true if
-      // node either doesn't contain any iframes or node contains only
-      // iframes with src='about:blank'
+      // about:blank iframes don't count as content, return true if:
+      // - node doesn't contain any iframes
+      // - node contains iframes, all of which are hidden or have src='about:blank'
       const noFramesWithContent = frameElements.every((frame) => {
-          return frame.src === 'about:blank'
+          return (frame.hidden || frame.src === 'about:blank')
       });
       if ((visibleText === '' || adLabelStrings.includes(visibleText)) &&
           noFramesWithContent && mediaContent === null) {
@@ -2299,25 +2299,19 @@
   function hideMatchingDomNodes (rules) {
       const document = globalThis.document;
 
-      // wait 300ms before hiding ad containers so ads have a chance to load
-      setTimeout(() => {
+      function hideMatchingNodesInner () {
           rules.forEach((rule) => {
               const matchingElementArray = [...document.querySelectorAll(rule.selector)];
               matchingElementArray.forEach((element) => {
                   collapseDomNode(element, rule.type);
               });
           });
-      }, 300);
+      }
+      // wait 300ms before hiding ad containers so ads have a chance to load
+      setTimeout(hideMatchingNodesInner, 300);
 
       // handle any ad containers that weren't added to the page within 300ms of page load
-      setTimeout(() => {
-          rules.forEach((rule) => {
-              const matchingElementArray = [...document.querySelectorAll(rule.selector)];
-              matchingElementArray.forEach((element) => {
-                  collapseDomNode(element, rule.type);
-              });
-          });
-      }, 1000);
+      setTimeout(hideMatchingNodesInner, 1000);
   }
 
   function init$c (args) {
