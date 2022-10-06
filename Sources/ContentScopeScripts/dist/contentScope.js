@@ -2277,6 +2277,11 @@
   }
 
   function hideNode (element) {
+      // there are cases where site replaces the element's class after page
+      // load, so set display: none directly on element and cache any prev
+      // inline display property
+      element.setAttribute('data-ddg-display', element.style.display);
+      element.style.setProperty('display', 'none', 'important');
       element.classList.add('ddg-hidden');
       element.hidden = true;
   }
@@ -2351,8 +2356,11 @@
       const hiddenElements = [...document.querySelectorAll('.ddg-hidden')];
       hiddenElements.forEach((element) => {
           if (!isDomNodeEmpty(element)) {
+              const prevDisplayProperty = element.getAttribute('data-ddg-display');
               element.classList.remove('ddg-hidden');
               element.hidden = false;
+              element.style.setProperty('display', prevDisplayProperty);
+              element.removeAttribute('data-ddg-display');
           }
       });
   }
