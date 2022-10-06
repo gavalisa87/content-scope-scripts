@@ -2240,33 +2240,35 @@
   });
 
   let adLabelStrings = [];
+  const parser = new DOMParser();
 
-  function collapseDomNode (element, type) {
+  function collapseDomNode (element, type, previousElement) {
       if (!element) {
+          return
+      }
+
+      const alreadyHidden = [...element.classList].includes('ddg-hidden') || element.closest('.ddg-hidden');
+
+      if (alreadyHidden) {
           return
       }
 
       switch (type) {
       case 'hide':
-          if (!element.hidden) {
-              hideNode(element);
-          }
+          hideNode(element);
           break
       case 'hide-empty':
-          if (!element.hidden && isDomNodeEmpty(element)) {
+          if (isDomNodeEmpty(element)) {
               hideNode(element);
           }
           break
       case 'closest-empty':
-          // if element already hidden, continue onto parent element
-          if (element.hidden) {
-              collapseDomNode(element.parentNode, type);
-              break
-          }
-
+          // only want to hide the outermost empty node so that we may easily
+          // unhide if ad loads
           if (isDomNodeEmpty(element)) {
-              hideNode(element);
-              collapseDomNode(element.parentNode, type);
+              collapseDomNode(element.parentNode, type, element);
+          } else if (previousElement) {
+              hideNode(previousElement);
           }
           break
       default:
@@ -2275,14 +2277,25 @@
   }
 
   function hideNode (element) {
-      element.style.setProperty('display', 'none', 'important');
+      element.classList.add('ddg-hidden');
       element.hidden = true;
   }
 
   function isDomNodeEmpty (node) {
-      const visibleText = node.innerText.trim().toLocaleLowerCase();
-      const mediaContent = node.querySelector('video,canvas');
-      const frameElements = [...node.querySelectorAll('iframe')];
+      // no sense wasting cycles checking if the page's body element is empty
+      if (node.tagName === 'BODY') {
+          return false
+      }
+      // use a DOMParser to remove all metadata elements before checking if
+      // the node is empty.
+      const parsedNode = parser.parseFromString(node.outerHTML, 'text/html').documentElement;
+      parsedNode.querySelectorAll('base,link,meta,script,style,template,title,desc').forEach((el) => {
+          el.remove();
+      });
+
+      const visibleText = parsedNode.innerText.trim().toLocaleLowerCase();
+      const mediaContent = parsedNode.querySelector('video,canvas');
+      const frameElements = [...parsedNode.querySelectorAll('iframe')];
       // about:blank iframes don't count as content, return true if:
       // - node doesn't contain any iframes
       // - node contains iframes, all of which are hidden or have src='about:blank'
@@ -2296,22 +2309,57 @@
       return false
   }
 
-  function hideMatchingDomNodes (rules) {
+  function applyRules (rules) {
       const document = globalThis.document;
 
-      function hideMatchingNodesInner () {
-          rules.forEach((rule) => {
-              const matchingElementArray = [...document.querySelectorAll(rule.selector)];
-              matchingElementArray.forEach((element) => {
-                  collapseDomNode(element, rule.type);
-              });
-          });
-      }
-      // wait 300ms before hiding ad containers so ads have a chance to load
-      setTimeout(hideMatchingNodesInner, 300);
+      // hide ad elements immediately, then try again in 250ms to catch any
+      // elements added to the page after load
+      hideAdNodes(rules);
+      setTimeout(function () {
+          hideAdNodes(rules);
+      }, 250);
 
-      // handle any ad containers that weren't added to the page within 300ms of page load
-      setTimeout(hideMatchingNodesInner, 1000);
+      // simulate scenario where ad loads into hidden container after 500ms
+      if (document.location.host === 'fortune.com') {
+          setTimeout(simulateAdLoad, 500);
+      }
+
+      // check hidden ad elements for contents, unhide if content has loaded
+      setTimeout(unHideLoadedAds, 750);
+  }
+
+  function simulateAdLoad () {
+      const document = globalThis.document;
+      const hiddenElements = [...document.querySelectorAll('.ddg-hidden')];
+      hiddenElements.forEach((element) => {
+          const newAd = document.createElement('iframe');
+          element.firstChild.append(newAd);
+      });
+  }
+
+  function hideAdNodes (rules) {
+      rules.forEach((rule) => {
+          const matchingElementArray = [...document.querySelectorAll(rule.selector)];
+          matchingElementArray.forEach((element) => {
+              collapseDomNode(element, rule.type);
+          });
+      });
+  }
+
+  function unHideLoadedAds () {
+      const document = globalThis.document;
+      const hiddenElements = [...document.querySelectorAll('.ddg-hidden')];
+      hiddenElements.forEach((element) => {
+          if (!isDomNodeEmpty(element)) {
+              element.classList.remove('ddg-hidden');
+              element.hidden = false;
+          }
+      });
+  }
+
+  function injectStyleTag () {
+      const document = globalThis.document;
+      document.head.insertAdjacentHTML('beforeend', '<style type="text/css">.ddg-hidden{display:none!important}</style>');
   }
 
   function init$c (args) {
@@ -2346,26 +2394,26 @@
       // now have the final list of rules to apply, so we apply them when document is loaded
       if (document.readyState === 'loading') {
           window.addEventListener('DOMContentLoaded', (event) => {
-              hideMatchingDomNodes(activeRules);
+              injectStyleTag();
+              applyRules(activeRules);
           });
       } else {
-          hideMatchingDomNodes(activeRules);
+          injectStyleTag();
+          applyRules(activeRules);
       }
       // single page applications don't have a DOMContentLoaded event on navigations, so
-      // we use proxy/reflect on history.pushState and history.replaceState to call hideMatchingDomNodes
-      // on page navigations, and listen for popstate events that indicate a back/forward navigation
-      const methods = ['pushState', 'replaceState'];
-      for (const methodName of methods) {
-          const historyMethodProxy = new DDGProxy(featureName, History.prototype, methodName, {
-              apply (target, thisArg, args) {
-                  hideMatchingDomNodes(activeRules);
-                  return DDGReflect.apply(target, thisArg, args)
-              }
-          });
-          historyMethodProxy.overload();
-      }
+      // we use proxy/reflect on history.pushState to call hideMatchingDomNodes on page
+      // navigations, and listen for popstate events that indicate a back/forward navigation
+      const historyMethodProxy = new DDGProxy(featureName, History.prototype, 'pushState', {
+          apply (target, thisArg, args) {
+              applyRules(activeRules);
+              return DDGReflect.apply(target, thisArg, args)
+          }
+      });
+      historyMethodProxy.overload();
+
       window.addEventListener('popstate', (event) => {
-          hideMatchingDomNodes(activeRules);
+          applyRules(activeRules);
       });
   }
 
